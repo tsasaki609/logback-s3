@@ -7,7 +7,6 @@ import ch.qos.logback.core.rolling.helper.Compressor;
 import ch.qos.logback.core.rolling.helper.FileNamePattern;
 import java.io.File;
 import java.io.IOException;
-import java.net.URI;
 import java.util.Date;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
@@ -15,26 +14,15 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.core.sync.RequestBody;
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 /** FileAppender extension for AWS S3 */
 @Data
 @EqualsAndHashCode(callSuper = true)
 public class S3FileAppender extends FileAppender {
 
-  private String region;
-  private String endpoint;
-  private String accessKeyId;
-  private String secretAccessKey;
-  private String bucket;
-  private String keyPrefix;
+  private S3Config config;
 
-  private S3Client s3Client;
+  private S3Uploader uploader;
 
   private ExecutorService executorService = Executors.newSingleThreadExecutor();
 
@@ -71,27 +59,6 @@ public class S3FileAppender extends FileAppender {
     return uploadLogFile;
   }
 
-  /** upload log file to specified bucket on AWS S3 */
-  protected void upload() {
-    final String key = new StringBuilder().append(getKeyPrefix()).append(getFile()).toString();
-    executorService.execute(
-        () -> {
-          File uploadLogFile = null;
-          try {
-            uploadLogFile = getUploadLogFile();
-            s3Client.putObject(
-                PutObjectRequest.builder().bucket(getBucket()).key(key).build(),
-                RequestBody.fromFile(uploadLogFile));
-          } catch (IOException e) {
-            addError("Executor did not upload", e);
-          } finally {
-            if (Objects.nonNull(uploadLogFile)) {
-              uploadLogFile.deleteOnExit();
-            }
-          }
-        });
-  }
-
   /**
    * determine compression mode for uploading log file
    *
@@ -114,21 +81,30 @@ public class S3FileAppender extends FileAppender {
   public void start() {
     super.start();
 
-    s3Client =
-        S3Client.builder()
-            .region(Region.of(region))
-            .endpointOverride(URI.create(endpoint))
-            .credentialsProvider(
-                StaticCredentialsProvider.create(
-                    AwsBasicCredentials.create(accessKeyId, secretAccessKey)))
-            .build();
+    //TODO move to shutdownhook and change local var
+    uploader = S3Uploader.create(config);
 
     Runtime.getRuntime()
         .addShutdownHook(
             new Thread(
                 () -> {
-                  upload();
+                  // upload log file to specified bucket on AWS S3
+                  File uploadLogFile = null;
+                  try {
+                    final String key =
+                        new StringBuilder()
+                            .append(config.getKeyPrefix())
+                            .append(getFile())
+                            .toString();
+                    uploadLogFile = getUploadLogFile();
+                    uploader.upload(config.getBucket(), key, uploadLogFile);
+                  } catch (IOException e) {
+                    addError("Upload failed", e);
+                  } finally {
+                    if (Objects.nonNull(uploadLogFile)) uploadLogFile.deleteOnExit();
+                  }
 
+                  //TODO この辺りの定型的な処理は共通化したい gracefulShutdownとか
                   executorService.shutdown();
                   try {
                     if (!executorService.awaitTermination(60, TimeUnit.SECONDS)) {
