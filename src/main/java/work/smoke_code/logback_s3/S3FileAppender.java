@@ -11,13 +11,11 @@ import java.util.Date;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 /** FileAppender extension for AWS S3 */
 @Data
-@EqualsAndHashCode(callSuper = true)
 public class S3FileAppender extends FileAppender {
 
   private S3Config config;
@@ -81,7 +79,6 @@ public class S3FileAppender extends FileAppender {
   public void start() {
     super.start();
 
-    //TODO move to shutdownhook and change local var
     uploader = S3Uploader.create(config);
 
     Runtime.getRuntime()
@@ -96,28 +93,22 @@ public class S3FileAppender extends FileAppender {
                             .append(config.getKeyPrefix())
                             .append(getFile())
                             .toString();
+
                     uploadLogFile = getUploadLogFile();
-                    uploader.upload(config.getBucket(), key, uploadLogFile);
+                    final File _uploadLogFile = uploadLogFile;
+
+                    executorService.execute(
+                        () -> {
+                          uploader.upload(config.getBucket(), key, _uploadLogFile);
+                        });
                   } catch (IOException e) {
                     addError("Upload failed", e);
                   } finally {
                     if (Objects.nonNull(uploadLogFile)) uploadLogFile.deleteOnExit();
                   }
 
-                  //TODO この辺りの定型的な処理は共通化したい gracefulShutdownとか
-                  executorService.shutdown();
-                  try {
-                    if (!executorService.awaitTermination(60, TimeUnit.SECONDS)) {
-                      // timeout
-                      executorService.shutdownNow();
-                      if (!executorService.awaitTermination(60, TimeUnit.SECONDS)) {
-                        addError("Executor did not terminate");
-                      }
-                    }
-                  } catch (InterruptedException e) {
-                    executorService.shutdownNow();
-                    Thread.currentThread().interrupt();
-                  }
+                  ExecutorUtil.gracefulShutdown(
+                      executorService, e -> System.err.println(e)); // TODO err handling
                 }));
   }
 }

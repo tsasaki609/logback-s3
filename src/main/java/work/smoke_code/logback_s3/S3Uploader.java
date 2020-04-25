@@ -3,8 +3,6 @@ package work.smoke_code.logback_s3;
 
 import java.io.File;
 import java.net.URI;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import lombok.*;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
@@ -31,18 +29,12 @@ class S3Uploader {
 
   @NonNull private S3Client client;
 
-  private ExecutorService executorService = Executors.newSingleThreadExecutor();
-
   protected void upload(@NonNull String bucket, @NonNull String key, @NonNull File file) {
-    executorService.execute(
-        () -> {
-          try {
-            client.putObject(
-                PutObjectRequest.builder().bucket(bucket).key(key).build(),
-                RequestBody.fromFile(file));
-          } catch (Exception e) {
-            // addError("Executor did not upload", e);
-          }
-        });
+    try {
+      client.putObject(
+          PutObjectRequest.builder().bucket(bucket).key(key).build(), RequestBody.fromFile(file));
+    } catch (Exception e) {
+      // addError("Executor did not upload", e);
+    }
   }
 }
