@@ -101,6 +101,7 @@ public class S3FileAppender extends FileAppender {
                     executorService.execute(
                         () -> {
                           uploader.upload(config.getBucket(), key, _uploadLogFile);
+                          addInfo(String.format("Uploded %s", _uploadLogFile.getName()));
                         });
                   } catch (IOException e) {
                     addError("Upload failed", e);
