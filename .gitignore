@@ -7,3 +7,6 @@ build
 # Extra
 src/test/resources/logback.xml
 .idea
+.log
+.gz
+.zip
