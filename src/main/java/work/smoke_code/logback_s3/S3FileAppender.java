@@ -16,6 +16,7 @@ import lombok.EqualsAndHashCode;
 
 /** FileAppender extension for AWS S3 */
 @Data
+@EqualsAndHashCode(callSuper = false)
 public class S3FileAppender extends FileAppender {
 
   private S3Config config;

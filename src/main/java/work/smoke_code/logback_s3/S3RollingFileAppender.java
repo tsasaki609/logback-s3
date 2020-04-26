@@ -2,20 +2,21 @@
 package work.smoke_code.logback_s3;
 
 import ch.qos.logback.core.rolling.RollingFileAppender;
+import ch.qos.logback.core.rolling.helper.CompressionMode;
+import ch.qos.logback.core.rolling.helper.Compressor;
+import ch.qos.logback.core.rolling.helper.FileNamePattern;
 import java.io.File;
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import org.apache.commons.io.FilenameUtils;
 
 /** RollingFileAppender extension for AWS S3 */
 @Data
+@EqualsAndHashCode(callSuper = false)
 public class S3RollingFileAppender extends RollingFileAppender {
 
   private S3Config config;
@@ -25,7 +26,50 @@ public class S3RollingFileAppender extends RollingFileAppender {
   private ExecutorService executorService = Executors.newSingleThreadExecutor();
 
   protected File getUploadLogFile() throws IOException {
-    return new File(getRollingPolicy().getActiveFileName());
+    CompressionMode compressionMode = determineCompressionMode();
+
+    Compressor compressor = new Compressor(compressionMode);
+    compressor.setContext(this.context);
+
+    String compressedLogFilePath;
+    File uploadLogFile;
+    switch (compressionMode) {
+      case NONE:
+        uploadLogFile = new File(getRollingPolicy().getActiveFileName());
+        break;
+      case GZ:
+        compressedLogFilePath =
+                new StringBuilder(getRollingPolicy().getActiveFileName().replaceAll("(\\..+$)", ".gz"))
+                        .toString();
+        compressor.compress(getRollingPolicy().getActiveFileName(), compressedLogFilePath, null);
+        uploadLogFile = new File(compressedLogFilePath);
+        break;
+      case ZIP:
+        compressedLogFilePath =
+                new StringBuilder(getRollingPolicy().getActiveFileName().replaceAll("(\\..+$)", ".zip"))
+                        .toString();
+        compressor.compress(
+            getRollingPolicy().getActiveFileName(),
+            compressedLogFilePath,
+            new FileNamePattern(getRollingPolicy().getActiveFileName(), this.context)
+                .convert(new Date()));
+        uploadLogFile = new File(compressedLogFilePath);
+        break;
+      default:
+        uploadLogFile = new File(getRollingPolicy().getActiveFileName());
+        break;
+    }
+
+    return uploadLogFile;
+  }
+
+  /**
+   * determine compression mode for uploading log file
+   *
+   * @return CompressionMode
+   */
+  protected CompressionMode determineCompressionMode() {
+    return getRollingPolicy().getCompressionMode();
   }
 
   @Override
@@ -41,17 +85,16 @@ public class S3RollingFileAppender extends RollingFileAppender {
                   // upload log file to specified bucket on AWS S3
                   File uploadLogFile = null;
                   try {
+                    uploadLogFile = getUploadLogFile();
                     final String key =
                         new StringBuilder()
                             .append(config.getKeyPrefix())
-                            .append(getRollingPolicy().getActiveFileName())
+                            .append(uploadLogFile.getName())
                             .toString();
-                    uploadLogFile = getUploadLogFile();
+                    addInfo(uploadLogFile.getName());
                     uploader.upload(config.getBucket(), key, uploadLogFile);
                   } catch (IOException e) {
                     addError("Upload failed", e);
-                  } finally {
-                    if (Objects.nonNull(uploadLogFile)) uploadLogFile.deleteOnExit();
                   }
 
                   ExecutorUtil.gracefulShutdown(executorService, e -> addError(e));
@@ -78,10 +121,7 @@ public class S3RollingFileAppender extends RollingFileAppender {
           }
 
           final String key =
-                  new StringBuilder()
-                          .append(config.getKeyPrefix())
-                          .append(getFile())
-                          .toString();
+              new StringBuilder().append(config.getKeyPrefix()).append(getFile()).toString();
 
           uploader.upload(config.getBucket(), key, logFile);
         });
