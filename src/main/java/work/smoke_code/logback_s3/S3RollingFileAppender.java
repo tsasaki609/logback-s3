@@ -16,7 +16,7 @@ import org.apache.commons.io.FilenameUtils;
 
 /** RollingFileAppender extension for AWS S3 */
 @Data
-@EqualsAndHashCode(callSuper = false)
+@EqualsAndHashCode(callSuper = true)
 public class S3RollingFileAppender extends RollingFileAppender {
 
   private S3Config config;
